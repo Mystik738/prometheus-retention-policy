@@ -1,9 +1,11 @@
-FROM golang
+FROM golang:alpine AS build
 
-WORKDIR /go/src/app
-COPY . .
+WORKDIR /src/
+COPY . /src/
 
 RUN go get -d -v ./...
-RUN go install -v ./...
+RUN CGO_ENABLED=0 go build -o /bin/app
 
-CMD ["app"]
+FROM scratch
+COPY --from=build /bin/app /bin/app
+ENTRYPOINT ["/bin/app"]

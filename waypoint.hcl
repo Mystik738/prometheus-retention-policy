@@ -12,20 +12,19 @@ app "retention" {
     # we'll build using a Dockerfile and keeping it in a local registry.
     build {
         use "docker" { }
-        
-        #Uncomment below to use a remote docker registry to push your built images.
-        
-        #registry {
-        #  use "docker" {
-        #    image = "registry.example.com/prometheus"
-        #    tag   = "latest"
-        #  }
-        #}
+                
+        registry {
+          use "docker" {
+            image = "mystik738/prometheus-retention"
+            tag   = "latest"
+            local = true
+          }
+        }
     }
 
     # Deploy to Kubernetes
     deploy {
-        use "kubernetes" {
+        use "docker" {
         }
     }
 }
