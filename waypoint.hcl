@@ -11,7 +11,9 @@ app "retention" {
     # Build specifies how an application should be deployed. In this case,
     # we'll build using a Dockerfile and keeping it in a local registry.
     build {
-        use "docker" { }
+        use "docker" {
+          buildkit = true
+        }
                 
         registry {
           use "docker" {
@@ -22,9 +24,9 @@ app "retention" {
         }
     }
 
-    # Deploy to Kubernetes
+    # Deploy to Docker
     deploy {
-        use "docker" {
+        use "kubernetes" {
         }
     }
 }

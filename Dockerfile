@@ -1,11 +1,14 @@
-FROM golang:alpine AS build
+FROM golang AS build
 
-WORKDIR /src/
-COPY . /src/
+WORKDIR /go/src/app
+COPY . .
 
+RUN go env -w GO111MODULE=auto
+RUN go env -w CGO_ENABLED=0
 RUN go get -d -v ./...
-RUN CGO_ENABLED=0 go build -o /bin/app
+RUN go build -v prometheus-retention-policy.go
 
 FROM scratch
-COPY --from=build /bin/app /bin/app
-ENTRYPOINT ["/bin/app"]
+COPY --from=build /go/src/app/prometheus-retention-policy app
+
+CMD ["./app"]

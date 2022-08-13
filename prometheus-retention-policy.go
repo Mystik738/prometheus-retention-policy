@@ -38,16 +38,16 @@ func main() {
 
 func runPolicy() {
 	prometheusURL, ok := os.LookupEnv("PROMETHEUS_URL")
-	exitIf(!ok, "No URL set")
+	exitIf(!ok, "No URL set, set environment variable PROMETHEUS_URL")
 	policyJSON, ok := os.LookupEnv("POLICY")
-	exitIf(!ok, "No policy set")
-
-	currentTime := time.Now()
-	log.Println("Beginning retention sweep on " + prometheusURL + " at " + currentTime.Format(timeLayout))
+	exitIf(!ok, "No policy set, set environment variable POLICY")
 
 	var policy policy
 	err := json.Unmarshal([]byte(policyJSON), &policy)
 	exitIf(err != nil, "Policy is not valid JSON policy")
+
+	currentTime := time.Now()
+	log.Println("Beginning retention sweep on " + prometheusURL + " at " + currentTime.Format(timeLayout))
 
 	//Get all metrics from endpoint
 	client := &http.Client{
