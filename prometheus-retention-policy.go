@@ -35,6 +35,7 @@ type environment struct {
 	Bucket   string
 	Policy   policy
 	Delta    int64
+	LogLevel string
 }
 
 type retention struct {
@@ -65,6 +66,9 @@ func main() {
 }
 
 func runPolicy() {
+	//Set Logging from env
+	setLogLevelFromEnv()
+
 	sourceType, ok := os.LookupEnv("SOURCE_TYPE")
 	//If sourcetype isn't set, default is http
 	if !ok {
@@ -286,6 +290,20 @@ func runTsdb(blockName string) (newBlock string, deleteParent bool) {
 	return "", false
 }
 
+func setLogLevelFromEnv() {
+	levelString, ok := os.LookupEnv("LOG_LEVEL")
+
+	if ok {
+		level, err := log.ParseLevel(strings.ToLower(levelString))
+		if err == nil {
+			log.Infof("Setting log level to %v", level)
+			log.SetLevel(level)
+		} else {
+			log.Errorf("Error setting log level from %v: %v", levelString, err)
+		}
+	}
+}
+
 func loadEnv() environment {
 	endpoint, ok := os.LookupEnv("SOURCE_URL")
 	exitIf(!ok, "No URL set, set environment variable SOURCE_URL")
@@ -295,6 +313,7 @@ func loadEnv() environment {
 	username, _ := os.LookupEnv("SOURCE_USERNAME")
 	password, _ := os.LookupEnv("SOURCE_PASSWORD")
 	bucket, _ := os.LookupEnv("SOURCE_BUCKET")
+	logLevel, _ := os.LookupEnv("LOG_LEVEL")
 
 	strDelta, ok := os.LookupEnv("SEARCH_DELTA")
 	if !ok {
@@ -314,6 +333,7 @@ func loadEnv() environment {
 		Policy:   policy,
 		Bucket:   bucket,
 		Delta:    int64(delta),
+		LogLevel: logLevel,
 	}
 }
 

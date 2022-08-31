@@ -41,6 +41,7 @@ func TestMinio(t *testing.T) {
 	os.Setenv("SOURCE_PASSWORD", "")
 	os.Setenv("SOURCE_TYPE", "minio")
 	os.Setenv("POLICY", `{"retentions":[{"seconds":315360000,"metrics":["power_factor_ratio","frequency","amperage","voltage","apparent_power","reactive_power","active_power","watt_hours_lifetime","watt_hours_seven_days","watt_hours_today","total_watts","reported_watts","aqi10", "aqi25", "pm10", "pm25", "pressure", "temperature","humidity","rpi_cpu_temperature_celsius","temperature_bed_actual", "temperature_bed_target", "temperature_tool0_actual","temperature_tool0_target"]}],"default":1209600,"set_default":true}`)
+	os.Setenv("LOG_LEVEL", "debug")
 
 	runPolicy()
 }
