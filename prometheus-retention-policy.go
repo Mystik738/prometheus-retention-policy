@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +24,7 @@ import (
 
 const (
 	timeLayout  = "2006-01-02T15:04:05Z"
-	concurrency = 8
+	concurrency = 1
 	dataDir     = "/tmp/retention/"
 )
 
@@ -52,6 +53,13 @@ type promNameValues struct {
 	Data   []string `json:"data"`
 }
 
+type deletionMark struct {
+	Id           string `json:"id"`
+	Version      int64  `json:"version"`
+	Details      string `json:"details"`
+	DeletionTime int64  `json:"deletion_time"`
+}
+
 func main() {
 	runPolicy()
 }
@@ -74,7 +82,6 @@ func runPolicy() {
 
 func runMinio() {
 	env := loadEnv()
-	log.SetLevel(log.DebugLevel)
 	useSSL := true
 
 	// Initialize minio client object.
@@ -101,9 +108,7 @@ func runMinio() {
 
 	blocks := make([]string, 0)
 	for block := range dirs {
-		log.Debugf("Object at %v", block.Key)
-
-		//TODO: Check if there's a delete marker
+		log.Debugf("Block at %v", block.Key)
 		log.Debugf("Checking for deletion mark at %v", block.Key+"deletion-mark.json")
 
 		_, err := minioClient.StatObject(ctx, env.Bucket, block.Key+"deletion-mark.json", minio.StatObjectOptions{})
@@ -113,33 +118,85 @@ func runMinio() {
 		} else {
 			log.Debugf("Deletion mark exists, skipping block %v", block.Key)
 		}
+
+		//TODO: Check if block range overlaps with any retention + some interval
 	}
 
-	//For each block
+	//For each block; can we do go routines here?
+	sem := make(chan bool, concurrency)
 	for _, block := range blocks {
-		//Download the block
-		log.Debugf("Deleting from block %v", block)
-		blockObjects := minioClient.ListObjects(ctx, env.Bucket, minio.ListObjectsOptions{
-			Prefix:    block,
-			Recursive: true,
-		})
-		for bucketObject := range blockObjects {
-			minioClient.FGetObject(ctx, env.Bucket, bucketObject.Key, dataDir+bucketObject.Key, minio.GetObjectOptions{})
+		sem <- true
+		go func(blockName string) {
+			defer func() { <-sem }()
+			//Download the block
+			log.Infof("Deleting from block %v", blockName)
+			blockObjects := minioClient.ListObjects(ctx, env.Bucket, minio.ListObjectsOptions{
+				Prefix:    blockName,
+				Recursive: true,
+			})
+			for bucketObject := range blockObjects {
+				log.Infof("Downloading %v", bucketObject.Key)
+				err := minioClient.FGetObject(ctx, env.Bucket, bucketObject.Key, dataDir+bucketObject.Key, minio.GetObjectOptions{})
+				checkErr(err)
+			}
 
-		}
+			//Initialize tsdb on the block
+			//Delete series from block
+			//Write new block
+			newBlockName, deleteParent := runTsdb(blockName)
 
-		//Initialize tsdb on the block
-		//Delete series from block
-		//Write new block
-		runTsdb(block)
+			//Upload new block
+			//This contains tombstones - should it?
+			if newBlockName != "" {
+				err = filepath.Walk(dataDir+newBlockName, func(path string, info os.FileInfo, err error) error {
+					checkErr(err)
+					if !info.IsDir() {
+						//Get object path/prefix
+						subpath := path[strings.Index(path, newBlockName):]
+						log.Infof("Uploading %v at %v", info.Name(), subpath)
+						_, err := minioClient.FPutObject(ctx, env.Bucket, subpath, path, minio.PutObjectOptions{})
+						checkErr(err)
+					}
+					return nil
+				})
+				checkErr(err)
+			}
 
-		//Upload new block
-		//Delete local copies
-		//Mark old block for deletion
+			//Mark old block for deletion
+			if deleteParent {
+				log.Infof("Marking %v for deletion", blockName)
+				//This shouldn't be hardcoded
+				deleteTime := time.Now().Add(time.Hour * 12)
+				deletionMark := deletionMark{
+					Version:      1,
+					Id:           blockName[:len(blockName)-1], //trailing slash
+					Details:      "source of compacted block",
+					DeletionTime: deleteTime.Unix(),
+				}
+				deletionMarkJson, err := json.Marshal(deletionMark)
+				checkErr(err)
+				err = os.WriteFile(dataDir+blockName+"deletion-mark.json", deletionMarkJson, 0644)
+				checkErr(err)
+				log.Infof("Uploading %v", blockName+"deletion-mark.json")
+				_, err = minioClient.FPutObject(ctx, env.Bucket, blockName+"deletion-mark.json", dataDir+blockName+"/deletion-mark.json", minio.PutObjectOptions{})
+				checkErr(err)
+			}
+			//Delete local copies
+			log.Debugf("Deleting local files")
+			err = os.RemoveAll(dataDir + blockName)
+			checkErr(err)
+
+			log.Infof("Compeleted block %v", blockName)
+		}(block)
+	}
+
+	log.Infof("Waiting for all blocks to finish")
+	for i := 0; i < cap(sem); i++ {
+		sem <- true
 	}
 }
 
-func runTsdb(blockName string) string {
+func runTsdb(blockName string) (newBlock string, deleteParent bool) {
 	log.Debugf("Deleting from tsdb")
 	db, err := tsdb.Open(dataDir, nil, nil, tsdb.DefaultOptions(), nil)
 	checkErr(err)
@@ -163,7 +220,7 @@ func runTsdb(blockName string) string {
 			matchers, err := parser.ParseMetricSelector(retention.Metrics[i])
 			checkErr(err)
 
-			log.Infof("Deleting %v before %v", matchers, endTime)
+			log.Debugf("Deleting %v before %v on %v", matchers, endTime, block)
 			err = block.Delete(0, timestamp.FromTime(endTime), matchers...)
 			checkErr(err)
 		}
@@ -204,11 +261,11 @@ func runTsdb(blockName string) string {
 		}
 		labelNames = labelNames[rems:]
 
-		log.Infof("Setting all other metrics to %v", endTime.Format(timeLayout))
+		log.Infof("Deleting all other metrics before %v", endTime.Format(timeLayout))
 		for i := range labelNames {
 			matchers, err := parser.ParseMetricSelector(labelNames[i])
 			checkErr(err)
-			log.Tracef("Deleting %v before %v", matchers, endTime)
+			log.Debugf("Deleting %v before %v on %v", matchers, endTime, block)
 			err = block.Delete(0, timestamp.FromTime(endTime), matchers...)
 			checkErr(err)
 		}
@@ -218,15 +275,15 @@ func runTsdb(blockName string) string {
 	defer cancel()
 	cmpt, err := tsdb.NewLeveledCompactor(ctx, nil, nil, []int64{1000000}, nil, nil)
 	checkErr(err)
-	newBlock, deleteParent, err := block.CleanTombstones(dataDir, cmpt)
+	newBlockId, deleteParent, err := block.CleanTombstones(dataDir, cmpt)
 	checkErr(err)
 
-	log.Infof("New block at %v, %v", newBlock, deleteParent)
+	if newBlockId != nil {
+		log.Infof("New block at %v; deleteParent: %v", newBlockId, deleteParent)
 
-	meta = block.Meta()
-	log.Infof("Block contains %v samples", meta.Stats.NumSamples)
-
-	return newBlock.String()
+		return newBlockId.String(), deleteParent
+	}
+	return "", false
 }
 
 func loadEnv() environment {
