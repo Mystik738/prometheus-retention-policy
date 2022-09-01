@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    prometheus: k8s
+  name: prometheus-retention
+spec:
+  schedule: "30 6 * * 1"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: prometheus-retention
+            image: mystik738/prometheus-retention:0.2
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: SOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: url
+            - name: SOURCE_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: bucket
+            - name: SOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: username
+            - name: SOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: password
+            - name: SOURCE_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: port
+            - name: SOURCE_TYPE
+              value: minio
+            - name: LOG_LEVEL
+              value: info
+            - name: POLICY
+              value: |- 
+                {"retentions":[{"seconds":315360000,"metrics":["power_factor_ratio","frequency","amperage","voltage","apparent_power","reactive_power","active_power","watt_hours_lifetime","watt_hours_seven_days","watt_hours_today","total_watts","reported_watts","aqi10", "aqi25", "pm10", "pm25", "pressure", "temperature","humidity","rpi_cpu_temperature_celsius","temperature_bed_actual", "temperature_bed_target", "temperature_tool0_actual","temperature_tool0_target"]}],"default":604800,"set_default":true}
+          restartPolicy: OnFailure 
