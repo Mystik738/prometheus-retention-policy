@@ -212,13 +212,16 @@ func runMinio() {
 				for _, retention := range evalRetentions {
 					evalTime := time.Now().Add(-time.Second * time.Duration(retention.Seconds))
 					if evalTime.After(minEvalTime) && evalTime.Before(maxEvalTime) {
-						log.Infof("%v's evaluation interval (%v, %v) contains %v", block.Key, minEvalTime, maxEvalTime, evalTime)
+						log.Infof("%v's evaluation interval (%v, %v) contains %v", block.Key, minEvalTime, maxEvalTime, evalTime.Format(time.RFC3339))
 						blocks = append(blocks, block.Key)
 						break
 					} else {
-						log.Debugf("%v's evaluation interval (%v, %v) does not contain %v", block.Key, minEvalTime, maxEvalTime, evalTime)
+						log.Debugf("%v's evaluation interval (%v, %v) does not contain %v", block.Key, minEvalTime, maxEvalTime, evalTime.Format(time.RFC3339))
 					}
 				}
+
+				//If we've gotten here, that means we're not adding the block because it doesn't match a retention
+				log.Infof("%v's evaluation interval doesn't match a retention period.", block.Key)
 			} else {
 				blocks = append(blocks, block.Key)
 			}
