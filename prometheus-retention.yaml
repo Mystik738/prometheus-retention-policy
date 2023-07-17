@@ -42,6 +42,11 @@ spec:
                 secretKeyRef:
                   name: prometheus-retention
                   key: port
+            - name: EVAL_PERIOD_SECONDS
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: evalPeriodSeconds
             - name: SOURCE_TYPE
               value: minio
             - name: LOG_LEVEL

@@ -40,14 +40,14 @@ const (
 var currentTime time.Time
 
 type environment struct {
-	Username string
-	Password string
-	Url      string
-	Bucket   string
-	Policy   policy
-	Delta    int64
-	LogLevel string
-	Port     string
+	Username   string
+	Password   string
+	Url        string
+	Bucket     string
+	Policy     policy
+	EvalPeriod int64
+	LogLevel   string
+	Port       string
 }
 
 type retention struct {
@@ -186,8 +186,11 @@ func runMinio() {
 			err = json.Unmarshal(fileData, &fileMeta)
 			checkErr(err)
 			minTime := time.UnixMilli(fileMeta.MinTime)
+			maxTime := time.UnixMilli(fileMeta.MaxTime)
 
-			//TODO: Check if block range overlaps with any retention + some interval
+			minEvalTime := minTime.Add(-time.Second * time.Duration(env.EvalPeriod))
+			maxEvalTime := maxTime.Add(time.Second * time.Duration(env.EvalPeriod))
+
 			if minTime.After(oldestDeleteTime) {
 				log.Infof("%v's oldest data at %v is younger than %v", block.Key, minTime, oldestDeleteTime)
 				blockStats[DataTooYoung]++
@@ -196,8 +199,23 @@ func runMinio() {
 				err = os.RemoveAll(dataDir + block.Key)
 				checkErr(err)
 			} else {
+				//Add our default retention as a "retention"
+				defaultRetention := retention{
+					Seconds: env.Policy.DefaultSeconds,
+				}
+				evalRetentions := append([]retention{defaultRetention}, env.Policy.Retentions...)
 
-				blocks = append(blocks, block.Key)
+				//Check if block range overlaps with any retention + interval
+				for _, retention := range evalRetentions {
+					evalTime := time.Now().Add(-time.Second * time.Duration(retention.Seconds))
+					if evalTime.After(minEvalTime) && evalTime.Before(maxEvalTime) {
+						log.Infof("%v's evaluation interval (%v, %v) contains %v", block.Key, minEvalTime, maxEvalTime, evalTime)
+						blocks = append(blocks, block.Key)
+						break
+					} else {
+						log.Debugf("%v's evaluation interval (%v, %v) does not contain %v", block.Key, minEvalTime, maxEvalTime, evalTime)
+					}
+				}
 			}
 		}
 	}
@@ -397,11 +415,11 @@ func loadEnv() environment {
 		port = "443"
 	}
 
-	strDelta, ok := os.LookupEnv("SEARCH_DELTA")
+	strEvalPeriod, ok := os.LookupEnv("EVAL_PERIOD_SECONDS")
 	if !ok {
-		strDelta = "-1"
+		strEvalPeriod = "-1"
 	}
-	delta, err := strconv.Atoi(strDelta)
+	delta, err := strconv.Atoi(strEvalPeriod)
 	checkErr(err)
 
 	var policy policy
@@ -409,14 +427,14 @@ func loadEnv() environment {
 	exitIf(err != nil, "Policy is not valid JSON policy")
 
 	return environment{
-		Url:      strings.TrimSpace(endpoint),
-		Username: strings.TrimSpace(username),
-		Password: strings.TrimSpace(password),
-		Policy:   policy,
-		Bucket:   strings.TrimSpace(bucket),
-		Delta:    int64(delta),
-		LogLevel: logLevel,
-		Port:     strings.TrimSpace(port),
+		Url:        strings.TrimSpace(endpoint),
+		Username:   strings.TrimSpace(username),
+		Password:   strings.TrimSpace(password),
+		Policy:     policy,
+		Bucket:     strings.TrimSpace(bucket),
+		EvalPeriod: int64(delta),
+		LogLevel:   logLevel,
+		Port:       strings.TrimSpace(port),
 	}
 }
 
