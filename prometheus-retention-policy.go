@@ -178,7 +178,10 @@ func runMinio() {
 			//Check if block is too young for any retention
 			log.Debugf("Downloading %v", block.Key+"meta.json")
 			err = minioClient.FGetObject(ctx, env.Bucket, block.Key+"meta.json", dataDir+block.Key+"meta.json", minio.GetObjectOptions{})
-			checkErr(err)
+			if err != nil {
+				log.Warnf("Block %v is missing meta.json, skipping", block.Key)
+				continue
+			}
 
 			fileData, err := os.ReadFile(dataDir + block.Key + "meta.json")
 			checkErr(err)
@@ -188,9 +191,6 @@ func runMinio() {
 			minTime := time.UnixMilli(fileMeta.MinTime)
 			maxTime := time.UnixMilli(fileMeta.MaxTime)
 
-			minEvalTime := minTime.Add(-time.Second * time.Duration(env.EvalPeriod))
-			maxEvalTime := maxTime.Add(time.Second * time.Duration(env.EvalPeriod))
-
 			if minTime.After(oldestDeleteTime) {
 				log.Infof("%v's oldest data at %v is younger than %v", block.Key, minTime, oldestDeleteTime)
 				blockStats[DataTooYoung]++
@@ -198,7 +198,10 @@ func runMinio() {
 				//remove the dir - we're done with the block
 				err = os.RemoveAll(dataDir + block.Key)
 				checkErr(err)
-			} else {
+			} else if env.EvalPeriod != -1 {
+				minEvalTime := minTime.Add(-time.Second * time.Duration(env.EvalPeriod))
+				maxEvalTime := maxTime.Add(time.Second * time.Duration(env.EvalPeriod))
+
 				//Add our default retention as a "retention"
 				defaultRetention := retention{
 					Seconds: env.Policy.DefaultSeconds,
@@ -216,6 +219,8 @@ func runMinio() {
 						log.Debugf("%v's evaluation interval (%v, %v) does not contain %v", block.Key, minEvalTime, maxEvalTime, evalTime)
 					}
 				}
+			} else {
+				blocks = append(blocks, block.Key)
 			}
 		}
 	}

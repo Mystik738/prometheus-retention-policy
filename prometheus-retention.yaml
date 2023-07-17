@@ -14,7 +14,7 @@ spec:
         spec:
           containers:
           - name: prometheus-retention
-            image: mystik738/prometheus-retention:0.2
+            image: mystik738/prometheus-retention:0.3.1
             imagePullPolicy: IfNotPresent
             env:
             - name: SOURCE_URL
