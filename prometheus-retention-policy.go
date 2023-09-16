@@ -150,8 +150,17 @@ func runMinio() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	//Check if bucket exists
+	be, err := minioClient.BucketExists(ctx, env.Bucket)
+	if err != nil || !be {
+		log.Fatal("Bucket does not exist")
+		return
+	} else {
+		log.Debugf("Bucket %v exists", env.Bucket)
+	}
+
 	dirs := minioClient.ListObjects(ctx, env.Bucket, minio.ListObjectsOptions{
-		Prefix:    "/",
+		Prefix:    "",
 		Recursive: false,
 	})
 
@@ -166,6 +175,10 @@ func runMinio() {
 
 	blocks := make([]string, 0)
 	for block := range dirs {
+		if block.Err != nil {
+			log.Error(block.Err)
+			continue
+		}
 		log.Debugf("Block at %v", block.Key)
 		log.Debugf("Checking for deletion mark at %v", block.Key+"deletion-mark.json")
 
