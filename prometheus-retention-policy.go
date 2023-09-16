@@ -40,14 +40,14 @@ const (
 var currentTime time.Time
 
 type environment struct {
-	Username string
-	Password string
-	Url      string
-	Bucket   string
-	Policy   policy
-	Delta    int64
-	LogLevel string
-	Port     string
+	Username   string
+	Password   string
+	Url        string
+	Bucket     string
+	Policy     policy
+	EvalPeriod int64
+	LogLevel   string
+	Port       string
 }
 
 type retention struct {
@@ -150,8 +150,17 @@ func runMinio() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	//Check if bucket exists
+	be, err := minioClient.BucketExists(ctx, env.Bucket)
+	if err != nil || !be {
+		log.Fatal("Bucket does not exist")
+		return
+	} else {
+		log.Debugf("Bucket %v exists", env.Bucket)
+	}
+
 	dirs := minioClient.ListObjects(ctx, env.Bucket, minio.ListObjectsOptions{
-		Prefix:    "/",
+		Prefix:    "",
 		Recursive: false,
 	})
 
@@ -166,6 +175,10 @@ func runMinio() {
 
 	blocks := make([]string, 0)
 	for block := range dirs {
+		if block.Err != nil {
+			log.Error(block.Err)
+			continue
+		}
 		log.Debugf("Block at %v", block.Key)
 		log.Debugf("Checking for deletion mark at %v", block.Key+"deletion-mark.json")
 
@@ -178,7 +191,10 @@ func runMinio() {
 			//Check if block is too young for any retention
 			log.Debugf("Downloading %v", block.Key+"meta.json")
 			err = minioClient.FGetObject(ctx, env.Bucket, block.Key+"meta.json", dataDir+block.Key+"meta.json", minio.GetObjectOptions{})
-			checkErr(err)
+			if err != nil {
+				log.Warnf("Block %v is missing meta.json, skipping", block.Key)
+				continue
+			}
 
 			fileData, err := os.ReadFile(dataDir + block.Key + "meta.json")
 			checkErr(err)
@@ -186,8 +202,8 @@ func runMinio() {
 			err = json.Unmarshal(fileData, &fileMeta)
 			checkErr(err)
 			minTime := time.UnixMilli(fileMeta.MinTime)
+			maxTime := time.UnixMilli(fileMeta.MaxTime)
 
-			//TODO: Check if block range overlaps with any retention + some interval
 			if minTime.After(oldestDeleteTime) {
 				log.Infof("%v's oldest data at %v is younger than %v", block.Key, minTime, oldestDeleteTime)
 				blockStats[DataTooYoung]++
@@ -195,8 +211,31 @@ func runMinio() {
 				//remove the dir - we're done with the block
 				err = os.RemoveAll(dataDir + block.Key)
 				checkErr(err)
-			} else {
+			} else if env.EvalPeriod != -1 {
+				minEvalTime := minTime.Add(-time.Second * time.Duration(env.EvalPeriod))
+				maxEvalTime := maxTime.Add(time.Second * time.Duration(env.EvalPeriod))
 
+				//Add our default retention as a "retention"
+				defaultRetention := retention{
+					Seconds: env.Policy.DefaultSeconds,
+				}
+				evalRetentions := append([]retention{defaultRetention}, env.Policy.Retentions...)
+
+				//Check if block range overlaps with any retention + interval
+				for _, retention := range evalRetentions {
+					evalTime := time.Now().Add(-time.Second * time.Duration(retention.Seconds))
+					if evalTime.After(minEvalTime) && evalTime.Before(maxEvalTime) {
+						log.Infof("%v's evaluation interval (%v, %v) contains %v", block.Key, minEvalTime, maxEvalTime, evalTime.Format(time.RFC3339))
+						blocks = append(blocks, block.Key)
+						break
+					} else {
+						log.Debugf("%v's evaluation interval (%v, %v) does not contain %v", block.Key, minEvalTime, maxEvalTime, evalTime.Format(time.RFC3339))
+					}
+				}
+
+				//If we've gotten here, that means we're not adding the block because it doesn't match a retention
+				log.Infof("%v's evaluation interval doesn't match a retention period.", block.Key)
+			} else {
 				blocks = append(blocks, block.Key)
 			}
 		}
@@ -397,11 +436,11 @@ func loadEnv() environment {
 		port = "443"
 	}
 
-	strDelta, ok := os.LookupEnv("SEARCH_DELTA")
+	strEvalPeriod, ok := os.LookupEnv("EVAL_PERIOD_SECONDS")
 	if !ok {
-		strDelta = "-1"
+		strEvalPeriod = "-1"
 	}
-	delta, err := strconv.Atoi(strDelta)
+	delta, err := strconv.Atoi(strEvalPeriod)
 	checkErr(err)
 
 	var policy policy
@@ -409,14 +448,14 @@ func loadEnv() environment {
 	exitIf(err != nil, "Policy is not valid JSON policy")
 
 	return environment{
-		Url:      strings.TrimSpace(endpoint),
-		Username: strings.TrimSpace(username),
-		Password: strings.TrimSpace(password),
-		Policy:   policy,
-		Bucket:   strings.TrimSpace(bucket),
-		Delta:    int64(delta),
-		LogLevel: logLevel,
-		Port:     strings.TrimSpace(port),
+		Url:        strings.TrimSpace(endpoint),
+		Username:   strings.TrimSpace(username),
+		Password:   strings.TrimSpace(password),
+		Policy:     policy,
+		Bucket:     strings.TrimSpace(bucket),
+		EvalPeriod: int64(delta),
+		LogLevel:   logLevel,
+		Port:       strings.TrimSpace(port),
 	}
 }
 

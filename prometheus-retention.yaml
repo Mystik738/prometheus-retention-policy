@@ -14,7 +14,7 @@ spec:
         spec:
           containers:
           - name: prometheus-retention
-            image: mystik738/prometheus-retention:0.2
+            image: mystik738/prometheus-retention:0.3.2
             imagePullPolicy: IfNotPresent
             env:
             - name: SOURCE_URL
@@ -42,6 +42,11 @@ spec:
                 secretKeyRef:
                   name: prometheus-retention
                   key: port
+            - name: EVAL_PERIOD_SECONDS
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-retention
+                  key: evalPeriodSeconds
             - name: SOURCE_TYPE
               value: minio
             - name: LOG_LEVEL

@@ -15,6 +15,7 @@ This service requires two envirnment variables to be set for the job to run succ
 | SOURCE_PORT | Port to access your source | `string` | 443 |
 | LOG_LEVEL | Logging level to run on | `string` | info |
 | POLICY | Your retention policy | `string` | <pre>{<br>  {"set_default": true, "default": 31536000, "retentions":[{"seconds":86400,"metrics":["series_a", "series_b"]}]}<br>}</pre> | no |
+| EVAL_PERIOD_SECONDS | If set, the minio source type will only trim blocks that has data within this many seconds of your retention periods. -1 will search all data. This should be some multiple of the frequency you run the process | `num` | 1814400 |
 
 # Building the image
 
